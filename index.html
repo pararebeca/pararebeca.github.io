@@ -1,150 +1,321 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simulador de Piso AR - Prueba Visual Directa</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background-color: #1e1e24;
-      color: #fff;
-      margin: 0;
-      padding: 15px;
-    }
-    .container {
-      position: relative;
-      width: 100%;
-      max-width: 640px;
-      margin: 0 auto;
-      border: 2px solid #444;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    video, canvas {
-      width: 100%;
-      display: block;
-    }
-    canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-    .controls {
-      max-width: 640px;
-      margin: 15px auto;
-      background: #2b2b36;
-      padding: 15px;
-      border-radius: 8px;
-      text-align: left;
-    }
-    .control-group {
-      margin-bottom: 10px;
-    }
-    label {
-      display: inline-block;
-      width: 160px;
-      font-size: 14px;
-    }
-    input[type=range] {
-      width: calc(100% - 170px);
-      vertical-align: middle;
-    }
-    #status {
-      margin-bottom: 10px;
-      color: #4da6ff;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Visualizador de Piso en Vivo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #0b0d10;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  video, canvas#overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  video { transform: scaleX(1); }
+
+  #status {
+    position: absolute;
+    top: 14px; left: 14px; right: 14px;
+    z-index: 20;
+    padding: 10px 14px;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(6px);
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  #panel {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    z-index: 20;
+    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.0));
+  }
+  #materials {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .swatch {
+    flex: 0 0 auto;
+    width: 56px; height: 56px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    background-size: cover;
+    background-position: center;
+  }
+  .swatch.active { border-color: #4fd1c5; }
+
+  #startBtn {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 12px;
+    background: #4fd1c5;
+    color: #06231f;
+    cursor: pointer;
+  }
+  #controls {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  #opacity {
+    flex: 1;
+  }
+  #hint {
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.7;
+    margin-top: 6px;
+  }
+  #loadingModel {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    background: #0b0d10;
+    text-align: center;
+    padding: 30px;
+  }
+  .spinner {
+    width: 34px; height: 34px;
+    border: 3px solid rgba(255,255,255,0.2);
+    border-top-color: #4fd1c5;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
 </head>
 <body>
 
-  <h2>Simulador de Piso - Prueba Interactiva</h2>
-  <div id="status">Iniciando cámara...</div>
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
 
-  <div class="container">
-    <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="outputCanvas"></canvas>
+  <div id="status">
+    Prototipo AR de piso — apuntá la cámara al suelo.
   </div>
 
-  <div class="controls">
-    <div class="control-group">
-      <label for="horizon">Horizonte / Altura Piso:</label>
-      <input type="range" id="horizon" min="0.1" max="0.9" step="0.05" value="0.4">
-    </div>
-    <div class="control-group">
-      <label for="opacity">Intensidad del Piso:</label>
-      <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="0.6">
+  <div id="loadingModel">
+    <div class="spinner"></div>
+    <div id="loadingText">Cargando modelo de IA (segmentación de escena)...</div>
+    <div style="font-size:12px; opacity:0.6; max-width:280px;">
+      La primera carga descarga ~10-15MB. Quedan cacheados para las próximas visitas.
     </div>
   </div>
 
-  <script>
-    const video = document.getElementById('webcam');
-    const canvas = document.getElementById('outputCanvas');
-    const ctx = canvas.getContext('2d');
-    const statusDiv = document.getElementById('status');
-    const horizonSlider = document.getElementById('horizon');
-    const opacitySlider = document.getElementById('opacity');
+  <div id="panel">
+    <button id="startBtn">Activar cámara</button>
+    <div id="controls">
+      <div id="materials"></div>
+    </div>
+    <div id="controls2" style="display:none; align-items:center; gap:10px; margin-top:4px;">
+      <span style="font-size:12px;">Intensidad</span>
+      <input type="range" id="opacity" min="0" max="100" value="88">
+    </div>
+    <div id="hint" style="display:none;">Elegí un material y mové el celular apuntando al piso</div>
+  </div>
+</div>
 
-    // 1. Iniciar la cámara del dispositivo
-    async function setupCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
-        video.srcObject = stream;
-        return new Promise((resolve) => {
-          video.onloadedmetadata = () => resolve(video);
-        });
-      } catch (e) {
-        statusDiv.innerText = "Error: Asegúrate de otorgar permisos a la cámara o usar un servidor local (localhost).";
+<!-- TensorFlow.js + modelo DeepLab (segmentación semántica, dataset ADE20K, incluye clase "floor") -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/deeplab@0.2.1/dist/deeplab.min.js"></script>
+
+<script>
+(async function () {
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d', { willReadFrequently: true });
+  const startBtn = document.getElementById('startBtn');
+  const statusEl = document.getElementById('status');
+  const controls = document.getElementById('controls');
+  const controls2 = document.getElementById('controls2');
+  const hint = document.getElementById('hint');
+  const materialsEl = document.getElementById('materials');
+  const opacitySlider = document.getElementById('opacity');
+  const loadingModel = document.getElementById('loadingModel');
+  const loadingText = document.getElementById('loadingText');
+
+  // --- 1. Materiales de ejemplo (reemplazá por las texturas reales de tus productos) ---
+  const materials = [
+    { id: 'roble',  name: 'Roble claro',   color: '#c9a267', pattern: makeStripePattern('#c9a267', '#b98f55') },
+    { id: 'gris',   name: 'Porcelanato gris', color: '#9aa0a6', pattern: makeTilePattern('#9aa0a6', '#868c92') },
+    { id: 'nogal',  name: 'Nogal oscuro',  color: '#5a3d2b', pattern: makeStripePattern('#5a3d2b', '#4a3122') },
+    { id: 'marmol', name: 'Mármol blanco', color: '#eae7e2', pattern: makeTilePattern('#eae7e2', '#d8d4cd') },
+  ];
+  let currentMaterial = materials[0];
+
+  function makeStripePattern(c1, c2) {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = c1; g.fillRect(0, 0, 64, 64);
+    g.fillStyle = c2;
+    for (let i = 0; i < 64; i += 16) g.fillRect(0, i, 64, 2);
+    return c;
+  }
+  function makeTilePattern(c1, c2) {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = c1; g.fillRect(0, 0, 64, 64);
+    g.strokeStyle = c2; g.lineWidth = 3;
+    g.strokeRect(1, 1, 62, 62);
+    return c;
+  }
+
+  materials.forEach((m, i) => {
+    const sw = document.createElement('div');
+    sw.className = 'swatch' + (i === 0 ? ' active' : '');
+    sw.style.background = m.color;
+    sw.title = m.name;
+    sw.addEventListener('click', () => {
+      currentMaterial = m;
+      [...materialsEl.children].forEach(el => el.classList.remove('active'));
+      sw.classList.add('active');
+    });
+    materialsEl.appendChild(sw);
+  });
+
+  // --- 2. Cámara ---
+  startBtn.addEventListener('click', async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      startBtn.style.display = 'none';
+      controls.style.display = 'flex';
+      controls2.style.display = 'flex';
+      hint.style.display = 'block';
+      resizeCanvas();
+      await loadModelAndRun();
+    } catch (err) {
+      statusEl.textContent = 'No se pudo acceder a la cámara: ' + err.message +
+        ' (recordá: esto necesita HTTPS y permiso de cámara del navegador).';
+    }
+  });
+
+  function resizeCanvas() {
+    overlay.width = video.videoWidth || window.innerWidth;
+    overlay.height = video.videoHeight || window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  // --- 3. Modelo de segmentación (DeepLab v3, dataset ADE20K -> incluye clase "floor") ---
+  async function loadModelAndRun() {
+    loadingModel.style.display = 'flex';
+    const model = await deeplab.load({ base: 'ade20k', quantizationBytes: 2 });
+    loadingModel.style.display = 'none';
+    statusEl.textContent = 'Modelo cargado. Apuntá al piso — el material se aplica automáticamente donde se detecta.';
+
+    const FLOOR_LABELS = ['floor', 'flooring', 'rug', 'carpet', 'mat', 'road', 'floor mat', 'floor, flooring'];
+
+    let running = true;
+    let lastMask = null;
+
+    async function segmentLoop() {
+      if (!running) return;
+      if (video.readyState >= 2) {
+        try {
+          const result = await model.segment(video);
+          lastMask = buildFloorMask(result, FLOOR_LABELS);
+        } catch (e) {
+          console.error('Error de segmentación', e);
+        }
       }
+      // Segmentar cada ~600ms (balance rendimiento/fluidez en celular); el dibujo se refresca en cada frame
+      setTimeout(segmentLoop, 600);
+    }
+    segmentLoop();
+
+    function buildFloorMask(result, floorLabels) {
+      const { legend, segmentationMap, width, height } = result;
+      const floorColors = Object.entries(legend)
+        .filter(([label]) => floorLabels.some(f => label.toLowerCase().includes(f)))
+        .map(([, color]) => color);
+
+      const mask = new Uint8ClampedArray(width * height);
+      for (let i = 0; i < width * height; i++) {
+        const r = segmentationMap[i * 4];
+        const g = segmentationMap[i * 4 + 1];
+        const b = segmentationMap[i * 4 + 2];
+        const isFloor = floorColors.some(c => c[0] === r && c[1] === g && c[2] === b);
+        mask[i] = isFloor ? 255 : 0;
+      }
+      return { data: mask, width, height };
     }
 
-    // 2. Procesar y Renderizar
-    function processFrame() {
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+    function drawFrame() {
+      resizeCanvasIfNeeded();
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        // Dibujar el video base en el canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      if (lastMask) {
+        // Escalar la máscara (resolución del modelo) al tamaño del canvas
+        const off = document.createElement('canvas');
+        off.width = lastMask.width;
+        off.height = lastMask.height;
+        const offCtx = off.getContext('2d');
+        const imgData = offCtx.createImageData(lastMask.width, lastMask.height);
+        for (let i = 0; i < lastMask.data.length; i++) {
+          const v = lastMask.data[i];
+          imgData.data[i * 4] = 255;
+          imgData.data[i * 4 + 1] = 255;
+          imgData.data[i * 4 + 2] = 255;
+          imgData.data[i * 4 + 3] = v; // alpha = máscara
+        }
+        offCtx.putImageData(imgData, 0, 0);
 
-        // Obtener parámetros de los controles
-        const horizonRatio = parseFloat(horizonSlider.value);
-        const opacity = parseFloat(opacitySlider.value);
-
-        const startY = canvas.height * horizonRatio;
-        const floorHeight = canvas.height - startY;
-
-        // Aplicar la capa del nuevo material (Piso de prueba color terracota/madera)
         ctx.save();
-        ctx.fillStyle = `rgba(180, 80, 30, ${opacity})`;
-        
-        // Creamos un trapecio simulando la perspectiva del suelo
-        ctx.beginPath();
-        ctx.moveTo(0, startY);
-        ctx.lineTo(canvas.width, startY);
-        ctx.lineTo(canvas.width, canvas.height);
-        ctx.lineTo(0, canvas.height);
-        ctx.closePath();
-        ctx.fill();
-
+        // 1) recortar al área de piso detectada
+        ctx.globalAlpha = opacitySlider.value / 100;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(off, 0, 0, overlay.width, overlay.height);
+        ctx.globalCompositeOperation = 'source-in';
+        const pattern = ctx.createPattern(currentMaterial.pattern, 'repeat');
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, overlay.width, overlay.height);
         ctx.restore();
       }
 
-      requestAnimationFrame(processFrame);
+      requestAnimationFrame(drawFrame);
     }
-
-    async function main() {
-      await setupCamera();
-      statusDiv.innerText = "Cámara activa. Mueve los deslizadores de abajo si deseas ajustar el área del piso.";
-      video.play();
-      processFrame();
+    function resizeCanvasIfNeeded() {
+      if (overlay.width !== video.videoWidth && video.videoWidth) resizeCanvas();
     }
-
-    main();
-  </script>
+    drawFrame();
+  }
+})();
+</script>
 </body>
 </html>
