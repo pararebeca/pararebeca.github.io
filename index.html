@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador de Piso AR - Prototipo</title>
+
+  <!-- Carga de TensorFlow.js y el modelo de segmentación BodyPix -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f4f4f9;
+      margin: 0;
+      padding: 10px;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    video, canvas {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #status {
+      margin: 10px 0;
+      font-weight: bold;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Simulador de Piso en Vivo (Prueba de Concepto)</h2>
+  <div id="status">Cargando modelo de IA... Por favor espera.</div>
+
+  <div class="container">
+    <!-- Video de la cámara -->
+    <video id="webcam" autoplay playsinline muted></video>
+    <!-- Canvas para renderizar la superposición -->
+    <canvas id="outputCanvas"></canvas>
+  </div>
+
+  <script>
+    let net;
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('outputCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusDiv = document.getElementById('status');
+
+    // Color/Patrón de prueba para el piso (Azul semi-transparente)
+    const floorColor = { r: 50, g: 150, b: 250, a: 0.6 };
+
+    // 1. Inicializar la Cámara del dispositivo
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      video.srcObject = stream;
+
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          resolve(video);
+        };
+      });
+    }
+
+    // 2. Cargar el modelo de IA en el navegador
+    async function loadModel() {
+      // Usamos BodyPix cargado de manera ligera (MobileNetV1)
+      net = await bodyPix.load({
+        architecture: 'MobileNetV1',
+        outputStride: 16,
+        multiplier: 0.75,
+        quantBytes: 2
+      });
+      statusDiv.innerText = "IA Lista. Apunta la cámara hacia el entorno.";
+    }
+
+    // 3. Procesamiento en tiempo real por cada frame
+    async function processFrame() {
+      // Ajustar dimensiones del canvas al video
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // Realizar la segmentación de la escena
+      const segmentation = await net.segmentPerson(video, {
+        internalResolution: 'medium',
+        segmentationThreshold: 0.7
+      });
+
+      // Dibujar la imagen original del video en el canvas
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Obtener los datos de píxeles para manipularlos
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imgData.data;
+
+      // Nota: BodyPix detecta personas y fondo. 
+      // Las áreas no pertenecientes a personas (fondo/piso) se identifican para aplicar la textura.
+      for (let i = 0; i < segmentation.data.length; i++) {
+        // Asumiendo que las áreas inferiores del video sin personas son el piso (lógica base)
+        const isBackground = segmentation.data[i] === 0;
+        const pixelIndex = i * 4;
+        const yCoord = Math.floor(i / canvas.width);
+
+        // Filtro simple: Aplicar color en la mitad inferior de la pantalla donde no hay personas
+        if (isBackground && yCoord > canvas.height * 0.5) {
+          data[pixelIndex] = (data[pixelIndex] + floorColor.r) / 2;     // Red
+          data[pixelIndex + 1] = (data[pixelIndex + 1] + floorColor.g) / 2; // Green
+          data[pixelIndex + 2] = (data[pixelIndex + 2] + floorColor.b) / 2; // Blue
+        }
+      }
+
+      // Reemplazar la imagen en el canvas con el piso modificado
+      ctx.putImageData(imgData, 0, 0);
+
+      // Ejecutar el siguiente frame
+      requestAnimationFrame(processFrame);
+    }
+
+    // Inicialización general
+    async function main() {
+      try {
+        await setupCamera();
+        await loadModel();
+        video.play();
+        processFrame();
+      } catch (err) {
+        statusDiv.innerText = "Error al acceder a la cámara o cargar la IA: " + err.message;
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
