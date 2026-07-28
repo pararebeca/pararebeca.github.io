@@ -3,144 +3,145 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simulador de Piso AR - Prototipo</title>
-
-  <!-- Carga de TensorFlow.js y el modelo de segmentación BodyPix -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0"></script>
-
+  <title>Simulador de Piso AR - Prueba Visual Directa</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       text-align: center;
-      background-color: #f4f4f9;
+      background-color: #1e1e24;
+      color: #fff;
       margin: 0;
-      padding: 10px;
+      padding: 15px;
     }
     .container {
       position: relative;
       width: 100%;
-      max-width: 600px;
+      max-width: 640px;
       margin: 0 auto;
+      border: 2px solid #444;
+      border-radius: 8px;
+      overflow: hidden;
     }
     video, canvas {
       width: 100%;
-      height: auto;
-      border-radius: 8px;
+      display: block;
     }
     canvas {
       position: absolute;
       top: 0;
       left: 0;
     }
+    .controls {
+      max-width: 640px;
+      margin: 15px auto;
+      background: #2b2b36;
+      padding: 15px;
+      border-radius: 8px;
+      text-align: left;
+    }
+    .control-group {
+      margin-bottom: 10px;
+    }
+    label {
+      display: inline-block;
+      width: 160px;
+      font-size: 14px;
+    }
+    input[type=range] {
+      width: calc(100% - 170px);
+      vertical-align: middle;
+    }
     #status {
-      margin: 10px 0;
-      font-weight: bold;
-      color: #333;
+      margin-bottom: 10px;
+      color: #4da6ff;
     }
   </style>
 </head>
 <body>
 
-  <h2>Simulador de Piso en Vivo (Prueba de Concepto)</h2>
-  <div id="status">Cargando modelo de IA... Por favor espera.</div>
+  <h2>Simulador de Piso - Prueba Interactiva</h2>
+  <div id="status">Iniciando cámara...</div>
 
   <div class="container">
-    <!-- Video de la cámara -->
     <video id="webcam" autoplay playsinline muted></video>
-    <!-- Canvas para renderizar la superposición -->
     <canvas id="outputCanvas"></canvas>
   </div>
 
+  <div class="controls">
+    <div class="control-group">
+      <label for="horizon">Horizonte / Altura Piso:</label>
+      <input type="range" id="horizon" min="0.1" max="0.9" step="0.05" value="0.4">
+    </div>
+    <div class="control-group">
+      <label for="opacity">Intensidad del Piso:</label>
+      <input type="range" id="opacity" min="0.1" max="1" step="0.1" value="0.6">
+    </div>
+  </div>
+
   <script>
-    let net;
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('outputCanvas');
     const ctx = canvas.getContext('2d');
     const statusDiv = document.getElementById('status');
+    const horizonSlider = document.getElementById('horizon');
+    const opacitySlider = document.getElementById('opacity');
 
-    // Color/Patrón de prueba para el piso (Azul semi-transparente)
-    const floorColor = { r: 50, g: 150, b: 250, a: 0.6 };
-
-    // 1. Inicializar la Cámara del dispositivo
+    // 1. Iniciar la cámara del dispositivo
     async function setupCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false
-      });
-      video.srcObject = stream;
-
-      return new Promise((resolve) => {
-        video.onloadedmetadata = () => {
-          resolve(video);
-        };
-      });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => resolve(video);
+        });
+      } catch (e) {
+        statusDiv.innerText = "Error: Asegúrate de otorgar permisos a la cámara o usar un servidor local (localhost).";
+      }
     }
 
-    // 2. Cargar el modelo de IA en el navegador
-    async function loadModel() {
-      // Usamos BodyPix cargado de manera ligera (MobileNetV1)
-      net = await bodyPix.load({
-        architecture: 'MobileNetV1',
-        outputStride: 16,
-        multiplier: 0.75,
-        quantBytes: 2
-      });
-      statusDiv.innerText = "IA Lista. Apunta la cámara hacia el entorno.";
-    }
+    // 2. Procesar y Renderizar
+    function processFrame() {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
 
-    // 3. Procesamiento en tiempo real por cada frame
-    async function processFrame() {
-      // Ajustar dimensiones del canvas al video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+        // Dibujar el video base en el canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Realizar la segmentación de la escena
-      const segmentation = await net.segmentPerson(video, {
-        internalResolution: 'medium',
-        segmentationThreshold: 0.7
-      });
+        // Obtener parámetros de los controles
+        const horizonRatio = parseFloat(horizonSlider.value);
+        const opacity = parseFloat(opacitySlider.value);
 
-      // Dibujar la imagen original del video en el canvas
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const startY = canvas.height * horizonRatio;
+        const floorHeight = canvas.height - startY;
 
-      // Obtener los datos de píxeles para manipularlos
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imgData.data;
+        // Aplicar la capa del nuevo material (Piso de prueba color terracota/madera)
+        ctx.save();
+        ctx.fillStyle = `rgba(180, 80, 30, ${opacity})`;
+        
+        // Creamos un trapecio simulando la perspectiva del suelo
+        ctx.beginPath();
+        ctx.moveTo(0, startY);
+        ctx.lineTo(canvas.width, startY);
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.lineTo(0, canvas.height);
+        ctx.closePath();
+        ctx.fill();
 
-      // Nota: BodyPix detecta personas y fondo. 
-      // Las áreas no pertenecientes a personas (fondo/piso) se identifican para aplicar la textura.
-      for (let i = 0; i < segmentation.data.length; i++) {
-        // Asumiendo que las áreas inferiores del video sin personas son el piso (lógica base)
-        const isBackground = segmentation.data[i] === 0;
-        const pixelIndex = i * 4;
-        const yCoord = Math.floor(i / canvas.width);
-
-        // Filtro simple: Aplicar color en la mitad inferior de la pantalla donde no hay personas
-        if (isBackground && yCoord > canvas.height * 0.5) {
-          data[pixelIndex] = (data[pixelIndex] + floorColor.r) / 2;     // Red
-          data[pixelIndex + 1] = (data[pixelIndex + 1] + floorColor.g) / 2; // Green
-          data[pixelIndex + 2] = (data[pixelIndex + 2] + floorColor.b) / 2; // Blue
-        }
+        ctx.restore();
       }
 
-      // Reemplazar la imagen en el canvas con el piso modificado
-      ctx.putImageData(imgData, 0, 0);
-
-      // Ejecutar el siguiente frame
       requestAnimationFrame(processFrame);
     }
 
-    // Inicialización general
     async function main() {
-      try {
-        await setupCamera();
-        await loadModel();
-        video.play();
-        processFrame();
-      } catch (err) {
-        statusDiv.innerText = "Error al acceder a la cámara o cargar la IA: " + err.message;
-      }
+      await setupCamera();
+      statusDiv.innerText = "Cámara activa. Mueve los deslizadores de abajo si deseas ajustar el área del piso.";
+      video.play();
+      processFrame();
     }
 
     main();
