@@ -95,7 +95,7 @@
     position: absolute;
     inset: 0;
     z-index: 30;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     flex-direction: column;
@@ -103,6 +103,9 @@
     background: #0b0d10;
     text-align: center;
     padding: 30px;
+  }
+  #loadingModel.visible {
+    display: flex;
   }
   .spinner {
     width: 34px; height: 34px;
@@ -234,9 +237,36 @@
 
   // --- 3. Modelo de segmentación (DeepLab v3, dataset ADE20K -> incluye clase "floor") ---
   async function loadModelAndRun() {
-    loadingModel.style.display = 'flex';
-    const model = await deeplab.load({ base: 'ade20k', quantizationBytes: 2 });
-    loadingModel.style.display = 'none';
+    loadingModel.classList.add('visible');
+
+    // Chequeos previos que suelen ser la causa real de "se queda descargando"
+    if (typeof tf === 'undefined') {
+      loadingText.textContent = 'Error: no se cargó tf.js (revisá conexión o si algo está bloqueando el CDN).';
+      return;
+    }
+    if (typeof deeplab === 'undefined') {
+      loadingText.textContent = 'Error: no se cargó el paquete deeplab.js desde el CDN.';
+      return;
+    }
+
+    let model;
+    try {
+      loadingText.textContent = 'Descargando pesos del modelo (puede pesar 20-40MB)...';
+      // Si tarda más de 25s asumimos que quedó colgado y avisamos, sin matar el intento
+      const timeoutId = setTimeout(() => {
+        loadingText.textContent = 'Está tardando más de lo normal. Si no avanza en 1-2 min más, ' +
+          'seguramente el CDN del modelo está bloqueado o hay un error (ver consola con "Inspeccionar" en Chrome desktop).';
+      }, 25000);
+
+      model = await deeplab.load({ base: 'ade20k', quantizationBytes: 2 });
+      clearTimeout(timeoutId);
+    } catch (err) {
+      console.error('Error cargando el modelo:', err);
+      loadingText.textContent = 'Error cargando el modelo: ' + (err && err.message ? err.message : err);
+      return;
+    }
+
+    loadingModel.classList.remove('visible');
     statusEl.textContent = 'Modelo cargado. Apuntá al piso — el material se aplica automáticamente donde se detecta.';
 
     const FLOOR_LABELS = ['floor', 'flooring', 'rug', 'carpet', 'mat', 'road', 'floor mat', 'floor, flooring'];
